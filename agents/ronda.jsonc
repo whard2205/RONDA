@@ -1,0 +1,131 @@
+{
+  // Published with `npm run publish:agent`, which substitutes {{PUBLIC_URL}}
+  // and {{TOOL_SECRET}} from .env before POSTing to /v1/agents.
+  "name": "RONDA — operator rounds copilot",
+
+  // Order follows AssemblyAI's prompting guide: identity and the single most
+  // important rule first, because rules buried mid-prompt get deprioritised.
+  "system_prompt": "You are RONDA, a hands-free assistant for a plant operator walking an equipment inspection round. The operator is wearing gloves in a noisy plant and cannot type or look at a screen.\n\nMost important rule: never judge for yourself whether a reading is normal. The log_reading tool returns a status computed against that equipment's real limits. Read the status out. Never do the comparison yourself and never invent a limit.\n\nTone: a colleague on the radio. Short sentences, one thing at a time. No filler and no enthusiasm. Never say certainly, absolutely, happy to help, or great question. Do not announce what you are about to do, just do it.\n\nHow a round works. The operator names an asset, like pump three A or aerator one. Call get_asset_checklist to load its check points, then name the first check and wait. The operator says a number. Call log_reading with that number, then say the value back, then the status. Work through the remaining checks one at a time; the tool tells you which are left. When the operator moves to another asset, start again with get_asset_checklist.\n\nReading numbers back is mandatory, every time. For example: seventy eight, that is above the seventy five alarm limit. If you did not clearly hear a number, ask for it again. Never guess a reading.\n\nWhen a reading comes back as warn or alarm, say the status, say the limit, mention the previous value if the tool gave you one, and ask whether to raise a work notification. Only call raise_notification if the operator says yes.\n\nIf the operator corrects the number they just gave, call correct_last_reading.\n\nThings you CAN do: load a checklist, log a reading, correct the last reading, raise a work notification. Things you CANNOT do: change limits, close notifications, pull maintenance history, or control equipment. If asked, say plainly that you cannot and suggest the control room.\n\nPass round_id on every tool call. You are given it at the start of the session.\n\nVoice formatting: plain spoken sentences, no markdown, no bullet points. Say units the way a person does: seventy eight degrees, four point five millimetres per second, thirty nine amps. Say asset tags as letters and numbers: P three A.",
+
+  "greeting": "Ronda here. Which asset are you starting at?",
+
+  // Voice IDs are exact strings. This one is from the documented US English
+  // set; an invented value is rejected at create time.
+  "voice": { "voice_id": "alba" },
+
+  "input": {
+    "format": { "encoding": "audio/pcm", "sample_rate": 24000 },
+
+    // Asset tags and rotating-equipment jargon. Common English words are
+    // deliberately excluded — they dilute the bias.
+    "keyterms": [
+      "P-3A", "P-3B", "AER-1", "AER-2", "BL-2", "CP-7",
+      "aerator", "blower", "impeller", "gearbox",
+      "drive end", "non drive end", "DE bearing", "NDE bearing",
+      "thrust bearing", "journal bearing", "gland packing", "mechanical seal",
+      "discharge pressure", "suction pressure", "differential pressure",
+      "dissolved oxygen", "seal water flow", "cavitation", "vibration",
+      "amperes", "millibar", "RPM", "work notification"
+    ],
+
+    // Operators pause while they read a gauge, so this is tuned for dictation
+    // rather than conversation: a longer window before the turn is closed.
+    "turn_detection": {
+      "vad_threshold": 0.4,
+      "min_silence": 200,
+      "max_silence": 2000,
+      "interrupt_response": true
+    }
+  },
+
+  "output": {
+    "voice": "alba",
+    "format": { "encoding": "audio/pcm", "sample_rate": 24000 }
+  },
+
+  "tools": [
+    {
+      "name": "get_asset_checklist",
+      "description": "Load the check points and location for one asset. Call this whenever the operator arrives at a new asset, before logging any reading.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset_tag": { "type": "string", "description": "Asset tag such as P-3A, AER-1, BL-2, CP-7." }
+        },
+        "required": ["asset_tag"]
+      },
+      "execution_mode": "interactive",
+      "timeout_seconds": 15,
+      "http": {
+        "url": "{{PUBLIC_URL}}/tools/asset-checklist",
+        "http_method": "GET",
+        "headers": [{ "name": "x-ronda-key", "value": "{{TOOL_SECRET}}" }]
+      }
+    },
+    {
+      "name": "log_reading",
+      "description": "Record one measured value. Returns a status of ok, warn or alarm computed against the equipment limits, plus the previous value and which checks remain. Always read the returned value and status back to the operator.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "round_id": { "type": "string", "description": "The round id given at the start of the session." },
+          "asset_tag": { "type": "string", "description": "Asset tag such as P-3A." },
+          "check": { "type": "string", "description": "Check point label, for example 'drive end bearing temperature'." },
+          "value": { "type": "number", "description": "The measured value the operator spoke." },
+          "unit": { "type": "string", "description": "Unit, if the operator stated one." },
+          "note": { "type": "string", "description": "Any extra observation the operator made about this check." }
+        },
+        "required": ["round_id", "asset_tag", "check", "value"]
+      },
+      "execution_mode": "interactive",
+      "timeout_seconds": 15,
+      "http": {
+        "url": "{{PUBLIC_URL}}/tools/log-reading",
+        "http_method": "POST",
+        "headers": [{ "name": "x-ronda-key", "value": "{{TOOL_SECRET}}" }]
+      }
+    },
+    {
+      "name": "correct_last_reading",
+      "description": "Replace the value of the reading that was just logged, when the operator corrects themselves.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "round_id": { "type": "string", "description": "The round id given at the start of the session." },
+          "value": { "type": "number", "description": "The corrected value." }
+        },
+        "required": ["round_id", "value"]
+      },
+      "execution_mode": "interactive",
+      "timeout_seconds": 15,
+      "http": {
+        "url": "{{PUBLIC_URL}}/tools/correct-last-reading",
+        "http_method": "POST",
+        "headers": [{ "name": "x-ronda-key", "value": "{{TOOL_SECRET}}" }]
+      }
+    },
+    {
+      "name": "raise_notification",
+      "description": "Raise a work notification for maintenance. Only call this after the operator explicitly agrees to it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "round_id": { "type": "string", "description": "The round id given at the start of the session." },
+          "asset_tag": { "type": "string", "description": "Asset tag such as P-3A." },
+          "severity": { "type": "string", "description": "One of low, medium, high." },
+          "summary": { "type": "string", "description": "One line describing the problem, including the reading that triggered it." }
+        },
+        "required": ["round_id", "asset_tag", "severity", "summary"]
+      },
+      // Dispatch can be slower than a conversational beat, so the agent holds
+      // the turn instead of going quiet mid-sentence.
+      "execution_mode": "hold",
+      "timeout_seconds": 30,
+      "http": {
+        "url": "{{PUBLIC_URL}}/tools/raise-notification",
+        "http_method": "POST",
+        "headers": [{ "name": "x-ronda-key", "value": "{{TOOL_SECRET}}" }]
+      }
+    }
+  ]
+}

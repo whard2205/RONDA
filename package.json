@@ -1,0 +1,17 @@
+{
+  "name": "ronda",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Voice copilot for industrial operator rounds, built on the AssemblyAI Voice Agent API.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server/index.mjs",
+    "seed": "node server/seed.mjs",
+    "publish:agent": "node publish.mjs",
+    "demo": "node scripts/simulate-round.mjs"
+  }
+}
