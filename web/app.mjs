@@ -14,7 +14,7 @@ const state = {
   ctx: null, stream: null, node: null, gain: null,
   sources: new Set(), playhead: 0,
   ready: false, live: false, rows: new Map(),
-  closing: false, resumeAttempts: 0,
+  closing: false, resuming: false, resumeAttempts: 0,
 }
 
 // ---------------------------------------------------------------- status ---
@@ -44,9 +44,14 @@ function renderTurn(itemId, who, text, { partial = false } = {}) {
 
 // -------------------------------------------------------------- playback ---
 function playChunk(base64) {
+  if (!base64 || !state.ctx || state.ctx.state === 'closed') return
   const bin = atob(base64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  // PCM16 is two bytes per sample; a truncated frame would make the Int16Array
+  // constructor throw, and this runs inside the socket's message handler.
+  const usable = bin.length - (bin.length % 2)
+  if (usable === 0) return
+  const bytes = new Uint8Array(usable)
+  for (let i = 0; i < usable; i++) bytes[i] = bin.charCodeAt(i)
   const pcm = new Int16Array(bytes.buffer)
 
   const f32 = new Float32Array(pcm.length)
@@ -257,7 +262,8 @@ function openSocket(token, agentId, { resumeSessionId = null } = {}) {
       if (!settled) { settled = true; reject(new Error('websocket closed before the session was ready')) }
       // An operator walking a plant loses signal. Losing the connection must not
       // silently end the round and drop the readings that follow.
-      if (!state.closing && state.live && state.sessionId) { attemptResume(); return }
+      if (!state.closing && state.live && state.sessionId && !state.resuming) { attemptResume(); return }
+      if (state.resuming) return // a resume chain is already handling this
       state.live = false
       finishUi()
     }
@@ -266,24 +272,37 @@ function openSocket(token, agentId, { resumeSessionId = null } = {}) {
 
 const RESUME_TRIES = 3
 
+// A single sequential chain. Recursing from both the catch block and the
+// replacement socket's onclose would double the number of attempts in flight
+// on every failure.
 async function attemptResume() {
-  if (state.resumeAttempts >= RESUME_TRIES) {
-    state.live = false
-    setStatus('connection lost — start a new round to continue', 'error')
-    // The round stays open server-side, so a fresh session keeps appending to it.
-    finishUi()
-    return
-  }
-  state.resumeAttempts++
-  setStatus(`reconnecting (${state.resumeAttempts}/${RESUME_TRIES})…`, 'busy')
-  await new Promise((r) => setTimeout(r, 400 * state.resumeAttempts))
-
+  if (state.resuming) return
+  state.resuming = true
   try {
-    // Tokens are single-use, so a reconnect needs a fresh one.
-    const { token, agent_id } = await (await fetch('/api/token')).json()
-    await openSocket(token, agent_id, { resumeSessionId: state.sessionId })
-  } catch {
-    attemptResume()
+    for (let attempt = 1; attempt <= RESUME_TRIES; attempt++) {
+      if (state.closing) return
+      state.resumeAttempts = attempt
+      setStatus(`reconnecting (${attempt}/${RESUME_TRIES})…`, 'busy')
+      await new Promise((r) => setTimeout(r, 400 * attempt))
+
+      try {
+        // Tokens are single-use, so every reconnect needs a fresh one.
+        const { token, agent_id } = await (await fetch('/api/token')).json()
+        // Only the first attempt asks to carry the conversation over. If the
+        // server will not resume — the window has passed, or it rejects the
+        // request outright — a plain new session still continues the round,
+        // because the round itself stays open server-side.
+        await openSocket(token, agent_id, { resumeSessionId: attempt === 1 ? state.sessionId : null })
+        return
+      } catch { /* fall through to the next attempt */ }
+    }
+
+    state.live = false
+    state.resumeAttempts = 0
+    setStatus('connection lost — start a new round to continue', 'error')
+    finishUi()
+  } finally {
+    state.resuming = false
   }
 }
 

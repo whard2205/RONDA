@@ -94,10 +94,12 @@ So `localhost` cannot work for tool calls. Put the server behind a real domain w
 npm test          # node:test, no dependencies, runs against a throwaway database
 ```
 
-Twenty-six tests over the parts where being wrong is expensive: threshold bands and
-their inclusive boundaries, how a spoken asset tag is matched, how an ambiguous check
-name is refused, superseding on re-read and on correction, and what happens when the
-model loses the round id.
+Forty tests over the parts where being wrong is expensive. On the logic: threshold
+bands and their inclusive boundaries, how a spoken asset tag is matched, how an
+ambiguous check name is refused, superseding on re-read and on correction, and what
+happens when the model loses the round id. On the HTTP surface: the shared-secret
+guard on every tool endpoint, the round lifecycle, malformed bodies, and that nothing
+outside `web/` can be served — `.env` included.
 
 ### Seeing it work without a published agent
 

@@ -65,7 +65,8 @@ async function serveStatic(res, urlPath) {
   }
 }
 
-const server = createServer(async (req, res) => {
+// Exported so the test suite can bind it to an ephemeral port.
+export const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`)
   const p = url.pathname
 
