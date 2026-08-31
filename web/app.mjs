@@ -14,6 +14,7 @@ const state = {
   ctx: null, stream: null, node: null, gain: null,
   sources: new Set(), playhead: 0,
   ready: false, live: false, rows: new Map(),
+  closing: false, resumeAttempts: 0,
 }
 
 // ---------------------------------------------------------------- status ---
@@ -167,7 +168,7 @@ async function startRound() {
   }
 }
 
-function openSocket(token, agentId) {
+function openSocket(token, agentId, { resumeSessionId = null } = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(WS_URL)
     url.searchParams.set('token', token)
@@ -176,13 +177,21 @@ function openSocket(token, agentId) {
     let settled = false
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'session.update', session: { agent_id: agentId } }))
+      // Resuming carries the previous conversation across a dropped connection;
+      // the server only honours it for a short window after the drop.
+      ws.send(JSON.stringify(
+        resumeSessionId
+          ? { type: 'session.resume', session_id: resumeSessionId }
+          : { type: 'session.update', session: { agent_id: agentId } },
+      ))
     }
 
     ws.onmessage = async (ev) => {
       const msg = JSON.parse(ev.data)
       switch (msg.type) {
         case 'session.ready': {
+          const resumed = state.resumeAttempts > 0
+          state.resumeAttempts = 0
           state.sessionId = msg.session_id
           state.ready = true
           fetch(`/api/round/${state.roundId}/session`, {
@@ -200,8 +209,8 @@ function openSocket(token, agentId) {
             content: `round_id for this round is ${state.roundId}. Include it in every tool call.`,
           }))
 
-          startMic()
-          setStatus('listening', 'live')
+          if (!resumed) startMic()
+          setStatus(resumed ? 'reconnected' : 'listening', 'live')
           els.mic.disabled = false
           els.mic.dataset.active = 'true'
           els.micLabel.textContent = 'End round'
@@ -244,12 +253,38 @@ function openSocket(token, agentId) {
 
     ws.onerror = () => { if (!settled) { settled = true; reject(new Error('websocket failed to connect')) } }
     ws.onclose = () => {
-      state.live = false
       state.ready = false
       if (!settled) { settled = true; reject(new Error('websocket closed before the session was ready')) }
+      // An operator walking a plant loses signal. Losing the connection must not
+      // silently end the round and drop the readings that follow.
+      if (!state.closing && state.live && state.sessionId) { attemptResume(); return }
+      state.live = false
       finishUi()
     }
   })
+}
+
+const RESUME_TRIES = 3
+
+async function attemptResume() {
+  if (state.resumeAttempts >= RESUME_TRIES) {
+    state.live = false
+    setStatus('connection lost — start a new round to continue', 'error')
+    // The round stays open server-side, so a fresh session keeps appending to it.
+    finishUi()
+    return
+  }
+  state.resumeAttempts++
+  setStatus(`reconnecting (${state.resumeAttempts}/${RESUME_TRIES})…`, 'busy')
+  await new Promise((r) => setTimeout(r, 400 * state.resumeAttempts))
+
+  try {
+    // Tokens are single-use, so a reconnect needs a fresh one.
+    const { token, agent_id } = await (await fetch('/api/token')).json()
+    await openSocket(token, agent_id, { resumeSessionId: state.sessionId })
+  } catch {
+    attemptResume()
+  }
 }
 
 function startMic() {
@@ -270,6 +305,7 @@ function startMic() {
 }
 
 async function stopRound({ silent = false } = {}) {
+  state.closing = true
   state.ready = false
   try { state.ws?.readyState === WebSocket.OPEN && state.ws.send(JSON.stringify({ type: 'session.end' })) } catch {}
   // Give the server a moment to acknowledge before tearing the socket down.
@@ -284,6 +320,8 @@ async function stopRound({ silent = false } = {}) {
   if (state.roundId) {
     await fetch(`/api/round/${state.roundId}/end`, { method: 'POST' }).catch(() => {})
   }
+  state.live = false
+  state.closing = false
   if (!silent) setStatus('round ended', 'idle')
   finishUi()
 }

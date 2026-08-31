@@ -88,6 +88,17 @@ validates the host at agent-create time and rejects private and loopback address
 So `localhost` cannot work for tool calls. Put the server behind a real domain with TLS
 (Caddy does this in one line) before running `publish:agent`.
 
+### Tests
+
+```bash
+npm test          # node:test, no dependencies, runs against a throwaway database
+```
+
+Twenty-six tests over the parts where being wrong is expensive: threshold bands and
+their inclusive boundaries, how a spoken asset tag is matched, how an ambiguous check
+name is refused, superseding on re-read and on correction, and what happens when the
+model loses the round id.
+
 ### Seeing it work without a published agent
 
 Publishing the agent needs a public HTTPS host, which is a deployment step. To exercise
@@ -117,6 +128,7 @@ Collected here because they are not obvious from a first read of the docs.
 | **`transcript.user.delta` supersedes** | Each delta replaces the previous one for that `item_id`. Concatenating duplicates the whole utterance. |
 | **Tool responses are capped at 8 KiB** | Endpoints return pre-summarised JSON, never row dumps. |
 | **Tool auth headers are write-only** | Read back as `last_set_at` with the value stripped. |
+| **Ambiguity is never resolved by guessing** | "temperature" matches two check points on a pump. The tool refuses and asks, rather than silently logging against the first match. Same rule for a lost `round_id` when more than one round is open. |
 | **Sessions must be closed** | `session.end` on teardown and on `beforeunload`; an abandoned socket keeps billing. |
 
 ### Passing the round id

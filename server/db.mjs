@@ -108,17 +108,31 @@ export function checksFor(tag) {
   return db.prepare('SELECT * FROM checks WHERE asset_tag = ? ORDER BY seq').all(tag)
 }
 
+// Resolve a spoken check name to exactly one check point.
+//
+// Substring matching must never pick a winner on its own: "temperature" matches
+// both the drive end and non drive end bearing on a pump, and silently logging
+// against the wrong one is the worst failure this product has. Ambiguity is
+// reported back so the agent asks which one the operator means.
+//
+// Returns { check } | { ambiguous: [labels] } | { none: true }
 export function findCheck(assetTag, checkRef) {
   const rows = checksFor(assetTag)
   const wanted = String(checkRef ?? '').trim().toLowerCase()
-  if (!wanted) return null
-  return (
+  if (!wanted) return { none: true }
+
+  // Exact matches are unambiguous by construction — take them immediately.
+  const exact =
     rows.find((c) => c.id.toLowerCase() === wanted) ??
-    rows.find((c) => c.label.toLowerCase() === wanted) ??
-    rows.find((c) => c.label.toLowerCase().includes(wanted)) ??
-    rows.find((c) => wanted.includes(c.label.toLowerCase())) ??
-    null
+    rows.find((c) => c.label.toLowerCase() === wanted)
+  if (exact) return { check: exact }
+
+  const partial = rows.filter(
+    (c) => c.label.toLowerCase().includes(wanted) || wanted.includes(c.label.toLowerCase()),
   )
+  if (partial.length === 1) return { check: partial[0] }
+  if (partial.length > 1) return { ambiguous: partial.map((c) => c.label) }
+  return { none: true }
 }
 
 export function previousReading(checkId, roundId) {
@@ -135,6 +149,12 @@ export function previousReading(checkId, roundId) {
        LIMIT 1`,
     )
     .get(checkId, roundId)
+}
+
+export function activeReadingFor(roundId, checkId) {
+  return db
+    .prepare('SELECT * FROM readings WHERE round_id = ? AND check_id = ? AND superseded = 0')
+    .get(roundId, checkId)
 }
 
 export function lastReadingOfRound(roundId) {
@@ -169,10 +189,10 @@ export function getRound(id) {
   return db.prepare('SELECT * FROM rounds WHERE id = ?').get(id)
 }
 
-// Defensive fallback: if the model omits or mangles round_id we attach the
-// reading to the most recent round that is still open rather than losing it.
-export function newestOpenRound() {
+// Every round that has not been closed yet. rowid breaks started_at ties so the
+// ordering is deterministic when several rounds open in the same millisecond.
+export function openRounds() {
   return db
-    .prepare('SELECT * FROM rounds WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1')
-    .get()
+    .prepare('SELECT * FROM rounds WHERE ended_at IS NULL ORDER BY started_at DESC, rowid DESC')
+    .all()
 }

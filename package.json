@@ -12,6 +12,7 @@
     "start": "node server/index.mjs",
     "seed": "node server/seed.mjs",
     "publish:agent": "node publish.mjs",
-    "demo": "node scripts/simulate-round.mjs"
+    "demo": "node scripts/simulate-round.mjs",
+    "test": "node --test test/*.test.mjs"
   }
 }
