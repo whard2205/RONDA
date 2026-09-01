@@ -100,7 +100,7 @@ Title bottom-left. Resist putting an architecture diagram on the cover.
 ## Checklist
 
 - [x] Public GitHub repository with MIT licence
-- [ ] Repository pushed and made public
+- [x] Repository pushed and made public — https://github.com/whard2205/RONDA
 - [ ] Application URL live with seed data for judges
 - [ ] Video presentation
 - [ ] Slide presentation — include one slide on why English first, Bahasa Indonesia on the roadmap
