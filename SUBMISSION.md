@@ -101,7 +101,7 @@ Title bottom-left. Resist putting an architecture diagram on the cover.
 
 - [x] Public GitHub repository with MIT licence
 - [x] Repository pushed and made public — https://github.com/whard2205/RONDA
-- [ ] Application URL live with seed data for judges
+- [x] Application URL live with seed data for judges — https://ronda.13.140.149.148.sslip.io
 - [ ] Video presentation
 - [ ] Slide presentation — include one slide on why English first, Bahasa Indonesia on the roadmap
 - [ ] Cover image
