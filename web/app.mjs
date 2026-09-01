@@ -32,10 +32,17 @@ function renderTurn(itemId, who, text, { partial = false } = {}) {
   if (!text) return
   let el = bubbles.get(itemId)
   if (!el) {
-    el = document.createElement('div')
-    el.className = `turn ${who}`
+    // The greeting arrives twice under two different ids — once before its
+    // item_id exists, once after — so keying alone draws it twice. Fold an
+    // immediate exact repeat by the same speaker into the bubble already on
+    // screen. A genuine repeat ("I did not hear a number") is always separated
+    // by the operator's turn, so it still gets its own bubble.
+    const last = els.transcript.lastElementChild
+    el = last && last.classList.contains(who) && last.textContent === text
+      ? last
+      : Object.assign(document.createElement('div'), { className: `turn ${who}` })
+    if (el !== last) els.transcript.append(el)
     bubbles.set(itemId, el)
-    els.transcript.append(el)
   }
   el.textContent = text
   el.dataset.partial = String(partial)
