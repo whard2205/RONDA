@@ -103,7 +103,7 @@ Title bottom-left. Resist putting an architecture diagram on the cover.
 - [x] Repository pushed and made public — https://github.com/whard2205/RONDA
 - [x] Application URL live with seed data for judges — https://ronda.13.140.149.148.sslip.io
 - [ ] Video presentation
-- [ ] Slide presentation — include one slide on why English first, Bahasa Indonesia on the roadmap
+- [x] Slide presentation — 10 slides, closes on limits + Bahasa Indonesia roadmap
 - [ ] Cover image
 - [x] Short description, long description, tags (drafted above)
 
