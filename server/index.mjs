@@ -52,6 +52,41 @@ function toolAuthorised(req) {
   return req.headers['x-ronda-key'] === TOOL_SECRET
 }
 
+// The demo URL is public by design — judges have to be able to open it and
+// talk. But /api/token mints AssemblyAI session tokens against our account and
+// /report spends LLM Gateway calls, so an open origin is also an open tab on
+// our bill. A fixed window per IP is enough: it stops a script, and no honest
+// visitor comes near the ceiling.
+const WINDOW_MS = 10 * 60_000
+const buckets = new Map()
+
+function clientIp(req) {
+  // Caddy terminates TLS and proxies from loopback, so the socket address is
+  // always 127.0.0.1 in production; the real address is the first hop in
+  // X-Forwarded-For.
+  const fwd = req.headers['x-forwarded-for']
+  if (typeof fwd === 'string' && fwd.length) return fwd.split(',')[0].trim()
+  return req.socket.remoteAddress ?? 'unknown'
+}
+
+function rateLimited(req, name, max) {
+  const key = `${name}:${clientIp(req)}`
+  const now = Date.now()
+  const hit = buckets.get(key)
+  if (!hit || now > hit.resetAt) {
+    buckets.set(key, { count: 1, resetAt: now + WINDOW_MS })
+    return false
+  }
+  hit.count += 1
+  return hit.count > max
+}
+
+// Unbounded growth would be a slow leak on a long-lived process.
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, hit] of buckets) if (now > hit.resetAt) buckets.delete(key)
+}, WINDOW_MS).unref()
+
 async function serveStatic(res, urlPath) {
   const rel = normalize(urlPath === '/' ? '/index.html' : urlPath).replace(/^(\.\.[/\\])+/, '')
   const file = join(WEB, rel)
@@ -73,6 +108,7 @@ export const server = createServer(async (req, res) => {
   try {
     // ---- browser: single-use session token (the API key stays here) --------
     if (p === '/api/token' && req.method === 'GET') {
+      if (rateLimited(req, 'token', 15)) return json(res, 429, { error: 'too many session tokens from this address; try again shortly' })
       const qs = new URLSearchParams({ expires_in_seconds: '300', max_session_duration_seconds: '3600' })
       const r = await fetch(`https://agents.assemblyai.com/v1/token?${qs}`, {
         headers: { authorization: `Bearer ${API_KEY}` },
@@ -85,6 +121,7 @@ export const server = createServer(async (req, res) => {
 
     // ---- round lifecycle ---------------------------------------------------
     if (p === '/api/round' && req.method === 'POST') {
+      if (rateLimited(req, 'round', 30)) return json(res, 429, { error: 'too many rounds started from this address; try again shortly' })
       const body = await readBody(req)
       const id = `R-${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 4).toUpperCase()}`
       db.prepare('INSERT INTO rounds (id, operator, session_id, started_at, ended_at) VALUES (?, ?, NULL, ?, NULL)')
@@ -127,6 +164,7 @@ export const server = createServer(async (req, res) => {
         return
       }
       if (sub === '/report' && req.method === 'GET') {
+        if (rateLimited(req, 'report', 20)) return json(res, 429, { error: 'too many report requests from this address; try again shortly' })
         return json(res, 200, await buildReport(roundId, API_KEY))
       }
     }
